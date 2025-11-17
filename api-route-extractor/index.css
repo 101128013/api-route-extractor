@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  font-size: 15px;
+}
+
+.ResizeHandleOuter {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: transparent;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.ResizeHandleOuter[data-resize-handle-state="hover"],
+.ResizeHandleOuter[data-resize-handle-state="drag"] {
+  background-color: rgba(31, 64, 104, 0.5);
+}
+
+.ResizeHandleInner {
+  background-color: #1f4068;
+  border-radius: 4px;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.ResizeHandleOuter[data-resize-handle-state="drag"] > .ResizeHandleInner {
+  background-color: #e43f5a;
+}
+
+.ResizeHandleOuter[data-panel-group-direction="horizontal"] {
+  width: 0.75rem;
+  cursor: col-resize;
+}
+
+.ResizeHandleOuter[data-panel-group-direction="vertical"] {
+  height: 0.75rem;
+  cursor: row-resize;
+}
+
+.ResizeHandleOuter[data-panel-group-direction="horizontal"] > .ResizeHandleInner {
+  width: 2px;
+  height: 2rem;
+}
+
+.ResizeHandleOuter[data-panel-group-direction="vertical"] > .ResizeHandleInner {
+  height: 2px;
+  width: 2rem;
+}

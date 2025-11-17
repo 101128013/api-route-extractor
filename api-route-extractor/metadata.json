@@ -1,0 +1,6 @@
+{
+  "name": "API Route Extractor",
+  "description": "An intelligent tool that analyzes minified or complex code snippets to identify and extract potential API routes and endpoints using the Gemini API.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
