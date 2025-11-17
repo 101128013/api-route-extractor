@@ -11,8 +11,6 @@ import { extractApiEndpoints, beautifyCode } from './services/geminiService';
 import type { ApiEndpoint, HistoryItem } from './types';
 import { HistoryPanel } from './components/HistoryPanel';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { Header } from './components/Header';
-import { Footer } from './components/Footer';
 
 
 // List of CORS proxy providers. They are tried in order.
@@ -130,7 +128,14 @@ const App: React.FC = () => {
         sourceForHistory = `${selectedFiles.length} file(s): ${selectedFiles.map(f => f.name).join(', ')}`;
         setAnalysisSource(`${selectedFiles.length} file(s)`);
       } else { // url mode
-        const urlsToAnalyze = urlInputs.map(u => u.trim()).filter(Boolean);
+        // Merge URLs from the dedicated URL inputs and any URLs typed line-by-line in the textarea
+        const urlsFromInputs = urlInputs.map(u => u.trim()).filter(Boolean);
+        const urlsFromText = inputText
+          .split(/\r?\n/) // each line
+          .map(line => line.trim())
+          .filter(line => line.length > 0);
+
+        const urlsToAnalyze = [...urlsFromInputs, ...urlsFromText];
         if (urlsToAnalyze.length === 0) {
           setError('Please enter at least one URL to analyze.');
           setIsLoading(false);
@@ -287,7 +292,6 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen bg-brand-bg">
-      <Header />
       <main className="flex-grow p-4">
         <PanelGroup direction="horizontal">
             <Panel defaultSize={25} minSize={20}>
@@ -336,7 +340,6 @@ const App: React.FC = () => {
             </Panel>
         </PanelGroup>
       </main>
-      <Footer />
     </div>
   );
 };
