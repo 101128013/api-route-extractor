@@ -1,13 +1,13 @@
 
 import React, { useRef } from 'react';
-import { ClearIcon, SparklesIcon, SpinnerIcon, LinkIcon, CodeBracketIcon, UploadIcon, XIcon } from './icons';
+import { ClearIcon, SparklesIcon, SpinnerIcon, CodeBracketIcon, UploadIcon } from './icons';
 
 interface InputPanelProps {
-  inputMode: 'code' | 'url' | 'file';
-  setInputMode: (mode: 'code' | 'url' | 'file') => void;
+  inputMode: 'code' | 'file';
+  setInputMode: (mode: 'code' | 'file') => void;
   inputText: string;
   setInputText: (text: string) => void;
-  urlInputs: string[];
+  urlInputs: string[]; // kept for compatibility with App state but not used in the UI
   setUrlInputs: (urls: string[]) => void;
   onExtract: () => void;
   isLoading: boolean;
@@ -15,12 +15,14 @@ interface InputPanelProps {
   onClear: () => void;
   onFileSelect: (files: FileList) => void;
   fileNames: string[];
+  isAiDiscoveryEnabled: boolean;
+  setIsAiDiscoveryEnabled: (enabled: boolean) => void;
 }
 
 const TabButton: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
     <button
         onClick={onClick}
-        className={`flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-md transition-colors ${
+        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold rounded-md transition-colors whitespace-nowrap ${
             active
                 ? 'bg-brand-secondary/20 text-brand-secondary'
                 : 'text-brand-subtle hover:bg-brand-primary/50'
@@ -44,6 +46,8 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     onClear,
     onFileSelect,
     fileNames,
+    isAiDiscoveryEnabled,
+    setIsAiDiscoveryEnabled,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -62,28 +66,8 @@ export const InputPanel: React.FC<InputPanelProps> = ({
     }
   };
 
-  const handleUrlChange = (index: number, value: string) => {
-    const newUrlInputs = [...urlInputs];
-    newUrlInputs[index] = value;
-    setUrlInputs(newUrlInputs);
-  };
-
-  const addUrlInput = () => {
-      if (urlInputs.length < 10) {
-          setUrlInputs([...urlInputs, '']);
-      }
-  };
-
-  const removeUrlInput = (index: number) => {
-      if (urlInputs.length > 1) {
-          const newUrlInputs = urlInputs.filter((_, i) => i !== index);
-          setUrlInputs(newUrlInputs);
-      }
-  };
-  
   const isExtractDisabled = isLoading || 
     (inputMode === 'code' && !inputText.trim()) ||
-    (inputMode === 'url' && urlInputs.every(u => !u.trim())) ||
     (inputMode === 'file' && fileNames.length === 0);
 
   const getButtonContent = () => {
@@ -104,16 +88,12 @@ export const InputPanel: React.FC<InputPanelProps> = ({
 
   return (
     <div className="flex flex-col bg-brand-surface rounded-lg border border-brand-primary h-full">
-      <div className="flex justify-between items-center p-3 border-b border-brand-primary">
-        <div className="flex items-center gap-2">
-            <TabButton active={inputMode === 'code'} onClick={() => setInputMode('code')}>
-                <CodeBracketIcon />
-                Paste Code
-            </TabButton>
-             <TabButton active={inputMode === 'url'} onClick={() => setInputMode('url')}>
-                <LinkIcon />
-                From URL
-            </TabButton>
+      <div className="flex justify-between items-center p-3 border-b border-brand-primary gap-2">
+        <div className="flex items-center gap-2 flex-1 bg-brand-bg/50 p-1 rounded-lg">
+          <TabButton active={inputMode === 'code'} onClick={() => setInputMode('code')}>
+            <CodeBracketIcon />
+            Paste Code / URL
+          </TabButton>
             <TabButton active={inputMode === 'file'} onClick={() => setInputMode('file')}>
                 <UploadIcon />
                 Upload
@@ -121,71 +101,49 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         </div>
         <button
           onClick={onClear}
-          className="p-1 text-brand-subtle hover:text-white transition-colors duration-200"
+          className="p-2 text-brand-subtle hover:text-red-500 hover:bg-red-500/10 rounded-md transition-colors duration-200 flex-shrink-0"
           title="Clear input"
+          aria-label="Clear input"
         >
           <ClearIcon />
         </button>
       </div>
       
       {inputMode === 'code' && (
-        <textarea
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          placeholder="Paste your minified JavaScript, code snippets, or any text here to find API routes..."
-          className="flex-grow p-4 bg-transparent resize-none focus:outline-none font-mono text-sm leading-relaxed"
-          spellCheck="false"
-        />
-      )}
-      {inputMode === 'url' && (
-        <div className="flex-grow p-4 flex flex-col">
-            <div className="space-y-2">
-              {urlInputs.map((url, index) => (
-                <div key={index} className="flex items-center gap-2">
-                    <input
-                        type="url"
-                        value={url}
-                        onChange={(e) => handleUrlChange(index, e.target.value)}
-                        placeholder="https://example.com"
-                        className="w-full p-3 bg-brand-bg border border-brand-primary rounded-md focus:outline-none focus:ring-2 focus:ring-brand-secondary font-mono text-sm"
-                    />
-                    {urlInputs.length > 1 && (
-                      <button 
-                        onClick={() => removeUrlInput(index)}
-                        className="p-1 text-brand-subtle hover:text-red-400 transition-colors rounded-full hover:bg-brand-primary"
-                        title="Remove URL"
-                        aria-label="Remove URL"
-                      >
-                          <XIcon className="w-5 h-5" />
-                      </button>
-                    )}
-                </div>
-              ))}
+        <div className="flex-grow flex flex-col min-h-0">
+          <textarea
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder="Paste code or URLs here.\n- Normal text/code will be analyzed as code.\n- Lines that look like URLs (or start with http/https) will be fetched and analyzed separately."
+            className="flex-grow p-4 bg-transparent border-none resize-none focus:outline-none font-mono text-sm leading-relaxed w-full h-full"
+            spellCheck="false"
+            aria-label="Code or URL input"
+          />
+          <div className="px-4 pb-2 flex flex-col gap-2">
+            <div className="p-2 bg-brand-primary/30 border border-brand-primary/50 rounded-md text-xs text-brand-subtle">
+                <p className="font-semibold text-brand-text mb-1">How it works:</p>
+                <ul className="list-disc list-inside space-y-1">
+                <li>Paste any code snippet or text and it will be analyzed directly.</li>
+                <li>Paste one or more URLs (one per line) to fetch and analyze each page separately.</li>
+                </ul>
             </div>
-            
-            {urlInputs.length < 10 && (
-                <button
-                    onClick={addUrlInput}
-                    className="mt-3 text-sm text-brand-secondary hover:text-opacity-80 transition-opacity self-start font-semibold"
-                >
-                    + Add another URL
-                </button>
-            )}
-
-            <div className="mt-4 p-3 bg-brand-primary/30 border border-brand-primary/50 rounded-md text-xs text-brand-subtle">
-                <p><strong>Note:</strong> Fetching from a URL uses a public CORS proxy. This may not work for all sites, especially those with strict security policies. If it fails, please try pasting the code manually.</p>
-            </div>
-             {inputText && (
-                <div className="mt-4 flex-grow flex flex-col border border-brand-primary rounded-md bg-brand-bg">
-                    <p className="text-xs p-2 text-brand-subtle border-b border-brand-primary">Fetched Code Preview (read-only):</p>
-                    <textarea
-                        value={inputText}
-                        readOnly
-                        className="flex-grow p-2 bg-transparent resize-none focus:outline-none font-mono text-xs text-brand-subtle"
-                        spellCheck="false"
+             <div className="flex items-center gap-2 p-2 bg-brand-primary/10 border border-brand-primary/30 rounded-md">
+                <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                        type="checkbox" 
+                        className="sr-only peer" 
+                        checked={isAiDiscoveryEnabled}
+                        onChange={(e) => setIsAiDiscoveryEnabled(e.target.checked)}
                     />
-                </div>
-            )}
+                    <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-brand-secondary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-secondary"></div>
+                    <span className="ml-3 text-sm font-medium text-brand-text flex items-center gap-2">
+                        <SparklesIcon />
+                        AI Discovery Mode
+                    </span>
+                </label>
+                <span className="text-xs text-brand-subtle hidden sm:inline">(Auto-crawls & predicts routes)</span>
+            </div>
+          </div>
         </div>
       )}
       {inputMode === 'file' && (
@@ -235,7 +193,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         <button
           onClick={onExtract}
           disabled={isExtractDisabled}
-          className="w-full flex items-center justify-center gap-2 bg-brand-secondary text-white font-bold py-3 px-4 rounded-md hover:bg-opacity-90 transition-all duration-200 disabled:bg-brand-primary disabled:cursor-not-allowed"
+          className="w-full flex items-center justify-center gap-2 bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-500 shadow-lg shadow-green-900/20 transition-all duration-200 disabled:bg-brand-primary disabled:cursor-not-allowed disabled:shadow-none"
         >
           {getButtonContent()}
         </button>

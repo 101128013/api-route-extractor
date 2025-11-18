@@ -1,20 +1,31 @@
-
 import React from 'react';
+import { SettingsIcon } from './icons';
 
-const ApiIcon = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-brand-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 21h16a2 2 0 002-2V5a2 2 0 00-2-2H4a2 2 0 00-2 2v14a2 2 0 002 2z" />
-    </svg>
-);
+interface HeaderProps {
+  onOpenSettings: () => void;
+}
 
-
-export const Header: React.FC = () => {
+export const Header: React.FC<HeaderProps> = ({ onOpenSettings }) => {
   return (
-    <header className="bg-brand-surface/50 backdrop-blur-sm border-b border-brand-primary p-4 sticky top-0 z-10">
-      <div className="container mx-auto flex items-center gap-4">
-        <ApiIcon />
-        <h1 className="text-2xl font-bold text-white tracking-tight">API Route Extractor</h1>
+    <header className="bg-brand-surface border-b border-brand-primary px-6 py-3 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 bg-gradient-to-br from-brand-secondary to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-brand-secondary/20">
+          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+        </div>
+        <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-brand-subtle">
+          API Route Extractor
+        </h1>
       </div>
+      
+      <button
+        onClick={onOpenSettings}
+        className="p-2 text-brand-subtle hover:text-white hover:bg-brand-primary rounded-md transition-colors"
+        title="Settings"
+      >
+        <SettingsIcon />
+      </button>
     </header>
   );
 };

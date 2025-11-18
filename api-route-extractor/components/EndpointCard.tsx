@@ -2,7 +2,23 @@ import React, { useState, useRef, useEffect, useId } from 'react';
 import type { ApiEndpoint } from '../types';
 import { analyzeApiCall, createChatSession } from '../services/geminiService';
 import type { Chat } from '@google/genai';
-import { CopyIcon, CheckIcon, ChevronDownIcon, PlayIcon, SpinnerIcon, SparklesIcon, UserIcon, BotIcon, SendIcon, PencilIcon } from './icons';
+import {
+    CheckIcon,
+    CopyIcon,
+    SparklesIcon,
+    CheckCircleIcon,
+    LockClosedIcon,
+    XCircleIcon,
+    DocumentTextIcon,
+    ExclamationTriangleIcon,
+    ChevronDownIcon,
+    PlayIcon,
+    SpinnerIcon,
+    UserIcon,
+    BotIcon,
+    SendIcon,
+    PencilIcon
+} from './icons';
 
 interface EndpointCardProps {
   endpoint: ApiEndpoint;
@@ -305,6 +321,36 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
                 >
                     {endpoint.method}
                 </span>
+                {endpoint.isPredicted && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded-full flex items-center gap-1">
+                        <SparklesIcon /> Predicted
+                    </span>
+                )}
+                {endpoint.verificationStatus === 'verified' && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-300 border border-green-500/30 rounded-full flex items-center gap-1">
+                        <CheckCircleIcon /> Verified
+                    </span>
+                )}
+                {endpoint.verificationStatus === 'auth_required' && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded-full flex items-center gap-1">
+                        <LockClosedIcon /> Auth Required
+                    </span>
+                )}
+                {endpoint.verificationStatus === 'not_found' && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-300 border border-red-500/30 rounded-full flex items-center gap-1">
+                        <XCircleIcon /> Not Found
+                    </span>
+                )}
+                {endpoint.verificationStatus === 'found_in_docs' && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full flex items-center gap-1">
+                        <DocumentTextIcon /> Found in Docs
+                    </span>
+                )}
+                 {endpoint.verificationStatus === 'unsafe' && (
+                    <span className="px-2 py-0.5 text-xs font-medium bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-full flex items-center gap-1" title="Unsafe to auto-test">
+                        <ExclamationTriangleIcon /> Unverified
+                    </span>
+                )}
                 <p className="font-mono text-sm text-brand-text truncate flex-shrink" title={endpoint.path}>{endpoint.path}</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">

@@ -1,102 +1,129 @@
 
+
 import { GoogleGenAI, Type, Chat } from "@google/genai";
 import type { ApiEndpoint } from '../types';
 
-if (!process.env.API_KEY) {
-  throw new Error("API_KEY environment variable not set");
-}
+const getApiKey = () => {
+  const localKey = localStorage.getItem('gemini-api-key');
+  // Remove quotes if stored as JSON string
+  if (localKey) return localKey.replace(/^"|"$/g, '');
+  return process.env.API_KEY;
+};
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getGenAIClient = () => {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        throw new Error("API Key is missing. Please set it in the Settings.");
+    }
+    return new GoogleGenAI({ apiKey });
+};
 
 const responseSchema = {
-  type: Type.ARRAY,
-  items: {
-    type: Type.OBJECT,
-    properties: {
-      method: {
-        type: Type.STRING,
-        description: "The HTTP method (e.g., GET, POST, PUT, DELETE). Use 'UNKNOWN' if it cannot be determined.",
-        enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'UNKNOWN'],
-      },
-      path: {
-        type: Type.STRING,
-        description: "The API endpoint path (e.g., '/api/v1/users').",
-      },
-      description: {
-        type: Type.STRING,
-        description: "A brief, one-sentence description of what this endpoint might do, inferred from the code context.",
-      },
-      details: {
-        type: Type.STRING,
-        description: "A detailed explanation of the endpoint's likely purpose, parameters, and behavior, inferred from the code. If context is minimal, provide a plausible explanation based on common API patterns.",
-      },
-      example: {
+  type: Type.OBJECT,
+  properties: {
+    explicitEndpoints: {
+      type: Type.ARRAY,
+      items: {
         type: Type.OBJECT,
-        description: "A plausible usage example for the endpoint.",
         properties: {
-          request: {
+          method: { type: Type.STRING, enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'UNKNOWN'] },
+          path: { type: Type.STRING },
+          description: { type: Type.STRING },
+          details: { type: Type.STRING },
+          example: {
             type: Type.OBJECT,
-            description: "Code snippets for calling the endpoint in different languages.",
             properties: {
-              curl: {
-                type: Type.STRING,
-                description: "A sample cURL command to call this endpoint. Include placeholders like YOUR_API_KEY or example data where appropriate.",
+              request: {
+                type: Type.OBJECT,
+                properties: {
+                  curl: { type: Type.STRING },
+                  javascript: { type: Type.STRING },
+                  python: { type: Type.STRING },
+                  php: { type: Type.STRING },
+                  go: { type: Type.STRING },
+                },
+                required: ["curl", "javascript", "python", "php", "go"],
               },
-              javascript: {
-                type: Type.STRING,
-                description: "A sample JavaScript `fetch` code snippet to call this endpoint. Use modern async/await syntax. Include placeholders for data and API keys.",
-              },
-              python: {
-                type: Type.STRING,
-                description: "A sample Python `requests` library code snippet to call this endpoint. Include placeholders for data and API keys.",
-              },
-              php: {
-                type: Type.STRING,
-                description: "A sample PHP snippet using cURL functions to call this endpoint. Include placeholders for data and API keys.",
-              },
-              go: {
-                type: Type.STRING,
-                description: "A sample Go snippet using the `net/http` package to call this endpoint. Include placeholders for data and API keys.",
-              },
+              response: { type: Type.STRING },
             },
-            required: ["curl", "javascript", "python", "php", "go"],
-          },
-          response: {
-            type: Type.STRING,
-            description: "An example of a likely JSON response body. Use placeholders where necessary.",
+            required: ["request", "response"],
           },
         },
-        required: ["request", "response"],
+        required: ["method", "path", "description", "details", "example"],
       },
     },
-    required: ["method", "path", "description", "details", "example"],
+    predictedEndpoints: {
+      type: Type.ARRAY,
+      description: "Hypothetical endpoints guessed based on the domain model (e.g., if /users exists, predict /users/{id}).",
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          method: { type: Type.STRING, enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'UNKNOWN'] },
+          path: { type: Type.STRING },
+          description: { type: Type.STRING },
+          details: { type: Type.STRING },
+          example: {
+            type: Type.OBJECT,
+            properties: {
+              request: {
+                type: Type.OBJECT,
+                properties: {
+                  curl: { type: Type.STRING },
+                  javascript: { type: Type.STRING },
+                  python: { type: Type.STRING },
+                  php: { type: Type.STRING },
+                  go: { type: Type.STRING },
+                },
+                required: ["curl", "javascript", "python", "php", "go"],
+              },
+              response: { type: Type.STRING },
+            },
+            required: ["request", "response"],
+          },
+        },
+        required: ["method", "path", "description", "details", "example"],
+      },
+    },
+    crawlingCandidates: {
+      type: Type.ARRAY,
+      description: "List of full URLs found in the content that likely contain API documentation, specifications, or further API usage examples.",
+      items: { type: Type.STRING },
+    },
   },
+  required: ["explicitEndpoints", "predictedEndpoints", "crawlingCandidates"],
 };
 
 const extractionPrompt = `
-You are an expert reverse engineer and security analyst specializing in web applications. Your task is to analyze potentially minified or obfuscated JavaScript code and extract all API routes and endpoints, providing detailed usage information.
+You are an expert reverse engineer and security analyst. Your task is to analyze the provided content (source code, HTML, or text) to discover API routes.
 
-Carefully examine the provided code. For each endpoint you identify:
-1.  **Extract**: Identify the HTTP method (e.g., GET, POST) and the full API path (e.g., '/api/v1/users'). If the method is unclear, use 'UNKNOWN'.
-2.  **Describe**: Write a brief, one-sentence 'description' of what the endpoint likely does.
-3.  **Detail**: Provide a more in-depth 'details' field explaining its potential purpose, parameters it might accept, and expected behavior based on the code context. If the code is sparse, make educated assumptions based on common API design patterns (e.g., a path like '/api/users/{id}' probably fetches a user by their ID).
-4.  **Exemplify**: Create a plausible 'example' object. This must contain a 'request' object and a 'response' field.
-    - The 'request' object must contain five distinct code snippets for calling the endpoint:
-        - \`curl\`: A complete cURL command.
-        - \`javascript\`: A browser-based JavaScript \`fetch\` snippet using async/await.
-        - \`python\`: A Python snippet using the \`requests\` library.
-        - \`php\`: A PHP snippet using its native cURL functions.
-        - \`go\`: A Go snippet using the standard \`net/http\` package.
-    - The 'response' field should contain a sample JSON response body.
-    - For all examples, use placeholders like 'YOUR_API_KEY' or example data where appropriate. If context is minimal, infer plausible examples based on the endpoint's path and method.
+**Objectives:**
+1.  **Find Explicit Routes**: Identify every API route explicitly mentioned or used in the code.
+2.  **Predict Routes (Exploratory Enumeration)**: Based on the "Explicit Routes" and the domain logic you observe (e.g., "User", "Product", "Order" entities), **hallucinate/predict** 20-50 likely API routes that *should* exist in a standard RESTful API.
+    *   *Example*: If you see \`GET /users\`, predict \`GET /users/{id}\`, \`POST /users\`, \`PUT /users/{id}\`, \`DELETE /users/{id}\`.
+    *   *Example*: If you see a "Login" button, predict \`POST /auth/login\`, \`POST /auth/logout\`, \`POST /auth/refresh\`.
+3.  **Identify Crawl Targets**: Look for links to "API Docs", "Swagger", "OpenAPI", "Developers", or other pages that likely contain more API definitions. Return these as \`crawlingCandidates\`.
 
-Your response MUST be a valid JSON array. Each object in the array must strictly follow the provided JSON schema.
+**Guidelines:**
+*   **Be Aggressive**: Assume a standard REST or GraphQL structure.
+*   **Infer Methods**: If unsure, guess the most standard method (GET for retrieval, POST for actions).
+*   **Ignore Assets**: Do not list .png, .css, .js files as API endpoints.
 
-Code to analyze:
+**Output Format:**
+Return a JSON object with:
+*   \`explicitEndpoints\`: Array of found endpoints.
+*   \`predictedEndpoints\`: Array of guessed endpoints.
+*   \`crawlingCandidates\`: Array of URLs to crawl next.
 `;
+
+export interface ExtractionResult {
+    explicitEndpoints: ApiEndpoint[];
+    predictedEndpoints: ApiEndpoint[];
+    crawlingCandidates: string[];
+}
 
 export const beautifyCode = async (code: string): Promise<string> => {
   try {
+    const ai = getGenAIClient();
     const prompt = `
 You are a code formatter. Your task is to take the following code snippet (which might be minified, obfuscated, or poorly formatted) and make it readable by beautifying it.
 - Add standard indentation.
@@ -128,6 +155,7 @@ ${code}
 
 export const analyzeApiCall = async (requestCurl: string, responseData: string): Promise<string> => {
   try {
+    const ai = getGenAIClient();
     const prompt = `
 You are an expert API debugger. A user executed a cURL command and received a response. Your task is to analyze both and provide a helpful diagnosis.
 
@@ -161,8 +189,9 @@ Provide your response in clear, easy-to-understand markdown format.
   }
 };
 
-export const extractApiEndpoints = async (code: string): Promise<ApiEndpoint[]> => {
+export const extractApiEndpoints = async (code: string): Promise<ExtractionResult> => {
   try {
+    const ai = getGenAIClient();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `${extractionPrompt}\n\n\`\`\`javascript\n${code}\n\`\`\``,
@@ -174,29 +203,38 @@ export const extractApiEndpoints = async (code: string): Promise<ApiEndpoint[]> 
 
     const responseText = response.text.trim();
     if (!responseText) {
-      return [];
+      console.warn("Gemini returned an empty response.");
+      return { explicitEndpoints: [], predictedEndpoints: [], crawlingCandidates: [] };
     }
     
-    // Sometimes the model might wrap the JSON in markdown, so we try to extract it.
-    const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```|([\s\S]*)/);
-    const jsonString = jsonMatch ? (jsonMatch[1] || jsonMatch[2]).trim() : responseText;
+    let jsonString = responseText;
+    const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     
-    const parsedJson = JSON.parse(jsonString);
-    
-    if (Array.isArray(parsedJson)) {
-        return parsedJson as ApiEndpoint[];
+    if (jsonMatch && jsonMatch[1]) {
+        jsonString = jsonMatch[1].trim();
     }
-    
-    console.warn("Gemini response was not a JSON array:", parsedJson);
-    return [];
+
+    try {
+        const parsedJson = JSON.parse(jsonString);
+        // Handle legacy array format if model falls back to it (unlikely with schema, but safe)
+        if (Array.isArray(parsedJson)) {
+             return { explicitEndpoints: parsedJson as ApiEndpoint[], predictedEndpoints: [], crawlingCandidates: [] };
+        }
+        return parsedJson as ExtractionResult;
+    } catch (parseError) {
+        console.error("Failed to parse JSON from Gemini response:", parseError);
+        throw new Error("Failed to parse the analysis results. The model output was not valid JSON.");
+    }
 
   } catch (error) {
-    console.error("Error calling Gemini API or parsing response:", error);
-    throw new Error("Failed to analyze the code. The model may have returned an invalid response.");
+    console.error("Error calling Gemini API or processing response:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    throw new Error(`Failed to analyze the code. Details: ${errorMessage}`);
   }
 };
 
 export const createChatSession = (sourceCode: string): Chat => {
+    const ai = getGenAIClient();
     const chat = ai.chats.create({
         model: 'gemini-2.5-flash',
         config: {

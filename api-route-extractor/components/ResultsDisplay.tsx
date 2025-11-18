@@ -2,7 +2,8 @@
 import React from 'react';
 import type { ApiEndpoint } from '../types';
 import { EndpointCard } from './EndpointCard';
-import { EmptyStateIcon, ErrorIcon, SpinnerIcon, DownloadIcon } from './icons';
+import { EmptyStateIcon, ErrorIcon, SpinnerIcon, DownloadIcon, SparklesIcon, CodeBracketIcon, ChevronDownIcon } from './icons';
+import { generateOpenApiSpec, generatePostmanCollection, downloadFile } from '../services/ExportService';
 
 
 interface ResultsDisplayProps {
@@ -33,9 +34,19 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
     URL.revokeObjectURL(url);
   };
 
+  const handleExportOpenApi = () => {
+    const spec = generateOpenApiSpec(endpoints);
+    downloadFile(spec, 'openapi.json', 'application/json');
+  };
+
+  const handleExportPostman = () => {
+    const collection = generatePostmanCollection(endpoints);
+    downloadFile(collection, 'postman_collection.json', 'application/json');
+  };
+
 
   const renderContent = () => {
-    if (isLoading) {
+  if (isLoading) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-brand-subtle">
             <SpinnerIcon />
@@ -81,9 +92,32 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
 
   return (
     <div className="flex flex-col bg-brand-surface rounded-lg border border-brand-primary h-full">
-      <div className="flex justify-between items-center p-3 border-b border-brand-primary">
-        <h2 className="text-lg font-semibold">Extracted Endpoints</h2>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col p-3 border-b border-brand-primary">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xl font-bold text-brand-text flex items-center gap-2">
+            <SparklesIcon className="text-brand-secondary" />
+            Extracted Endpoints ({endpoints.length})
+          </h2>
+          <div className="flex gap-2">
+              {endpoints.length > 0 && !isLoading && !error && (
+                <>
+                  <button
+                      onClick={handleExportOpenApi}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-brand-text bg-brand-surface border border-brand-primary rounded-md hover:bg-brand-primary transition-colors"
+                  >
+                      <DownloadIcon /> OpenAPI
+                  </button>
+                  <button
+                      onClick={handleExportPostman}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-brand-text bg-brand-surface border border-brand-primary rounded-md hover:bg-brand-primary transition-colors"
+                  >
+                      <DownloadIcon /> Postman
+                  </button>
+                </>
+              )}
+          </div>
+        </div>
+        <div className="flex justify-between items-center">
             {source && !isLoading && !error && (
                 <span className="text-xs text-brand-subtle bg-brand-primary px-2 py-1 rounded-md truncate max-w-xs" title={source}>Source: {source}</span>
             )}
@@ -100,6 +134,25 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
             )}
         </div>
       </div>
+      
+      {analysisCode && (
+        <div className="px-4 py-2 border-b border-brand-primary bg-brand-bg/50">
+            <details className="group">
+                <summary className="flex items-center gap-2 cursor-pointer text-xs text-brand-subtle hover:text-brand-text transition-colors select-none">
+                    <CodeBracketIcon />
+                    <span>View Analyzed Source ({analysisCode.length} chars)</span>
+                    <ChevronDownIcon className="w-4 h-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="mt-2 p-3 bg-black/30 rounded-md border border-brand-primary overflow-x-auto">
+                    <pre className="text-xs font-mono text-brand-subtle whitespace-pre-wrap break-all max-h-60 overflow-y-auto">
+                        {analysisCode.slice(0, 10000)}
+                        {analysisCode.length > 10000 && <span className="text-brand-secondary italic">... (truncated)</span>}
+                    </pre>
+                </div>
+            </details>
+        </div>
+      )}
+
       <div className="p-4 flex-grow overflow-y-auto">
         {renderContent()}
       </div>

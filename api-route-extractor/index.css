@@ -2,49 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
-html {
-  font-size: 15px;
+:root {
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-primary: #334155;
+  --color-secondary: #3b82f6;
+  --color-text: #f1f5f9;
+  --color-subtle: #94a3b8;
+  --color-accent: #8b5cf6;
 }
 
-.ResizeHandleOuter {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: transparent;
-  transition: background-color 0.2s ease-in-out;
+@layer base {
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-brand-bg text-brand-text font-sans antialiased;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+      radial-gradient(at 0% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-brand-bg;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-brand-primary rounded-full hover:bg-brand-subtle transition-colors;
+  }
 }
 
-.ResizeHandleOuter[data-resize-handle-state="hover"],
-.ResizeHandleOuter[data-resize-handle-state="drag"] {
-  background-color: rgba(31, 64, 104, 0.5);
+@layer components {
+  .ResizeHandleOuter {
+    @apply relative flex items-center justify-center bg-brand-bg hover:bg-brand-primary transition-colors z-10;
+  }
+
+  .ResizeHandleOuter[data-panel-group-direction="horizontal"] {
+    @apply w-2 cursor-col-resize;
+  }
+
+  .ResizeHandleOuter[data-panel-group-direction="vertical"] {
+    @apply h-2 cursor-row-resize;
+  }
+
+  .ResizeHandleInner {
+    @apply absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-brand-primary rounded-full transition-colors;
+  }
+
+  .ResizeHandleOuter[data-panel-group-direction="horizontal"] .ResizeHandleInner {
+    @apply w-1 h-8;
+  }
+
+  .ResizeHandleOuter[data-panel-group-direction="vertical"] .ResizeHandleInner {
+    @apply w-8 h-1;
+  }
+
+  .ResizeHandleOuter:hover .ResizeHandleInner,
+  .ResizeHandleOuter:active .ResizeHandleInner {
+    @apply bg-brand-secondary;
+  }
 }
 
-.ResizeHandleInner {
-  background-color: #1f4068;
-  border-radius: 4px;
-  transition: background-color 0.2s ease-in-out;
-}
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out forwards;
+  }
 
-.ResizeHandleOuter[data-resize-handle-state="drag"] > .ResizeHandleInner {
-  background-color: #e43f5a;
-}
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
 
-.ResizeHandleOuter[data-panel-group-direction="horizontal"] {
-  width: 0.75rem;
-  cursor: col-resize;
-}
-
-.ResizeHandleOuter[data-panel-group-direction="vertical"] {
-  height: 0.75rem;
-  cursor: row-resize;
-}
-
-.ResizeHandleOuter[data-panel-group-direction="horizontal"] > .ResizeHandleInner {
-  width: 2px;
-  height: 2rem;
-}
-
-.ResizeHandleOuter[data-panel-group-direction="vertical"] > .ResizeHandleInner {
-  height: 2px;
-  width: 2rem;
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
 }

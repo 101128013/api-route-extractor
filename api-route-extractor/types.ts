@@ -14,6 +14,8 @@ export interface ApiEndpoint {
     };
     response: string; // Example JSON response
   };
+  isPredicted?: boolean;
+  verificationStatus?: 'verified' | 'auth_required' | 'not_found' | 'unsafe' | 'found_in_docs' | 'unverified';
 }
 
 export interface HistoryItem {

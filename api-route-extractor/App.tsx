@@ -11,49 +11,40 @@ import { extractApiEndpoints, beautifyCode } from './services/geminiService';
 import type { ApiEndpoint, HistoryItem } from './types';
 import { HistoryPanel } from './components/HistoryPanel';
 import { useLocalStorage } from './hooks/useLocalStorage';
+import { SettingsModal } from './components/SettingsModal';
+import { Header } from './components/Header';
 
 
-// List of CORS proxy providers. They are tried in order.
-const proxies = [
-    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-];
-
-/**
- * Tries to fetch a URL using a series of CORS proxies.
- * @param url The URL to fetch.
- * @returns A promise that resolves to the response object.
- * @throws An error if all proxies fail.
- */
-const fetchWithProxies = async (url: string): Promise<Response> => {
-    let lastError: Error | null = null;
-    for (const proxy of proxies) {
-        try {
-            const response = await fetch(proxy(url));
-            if (response.ok) {
-                return response;
-            }
-            lastError = new Error(`Proxy failed with status: ${response.status}`);
-        } catch (error) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-        }
-    }
-    throw new Error(`All proxies failed. Last error: ${lastError?.message}`);
-};
+import { fetchUrlContent, smartCrawl } from './services/CrawlerService';
+import { verifyEndpoint } from './services/VerificationService';
+import { ActivityLog, LogEntry, LogType } from './components/ActivityLog';
 
 
 const App: React.FC = () => {
   const [inputText, setInputText] = useState<string>('');
   const [urlInputs, setUrlInputs] = useState<string[]>(['']);
-  const [inputMode, setInputMode] = useState<'code' | 'url' | 'file'>('code');
+  const [inputMode, setInputMode] = useState<'code' | 'file'>('code');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [extractedEndpoints, setExtractedEndpoints] = useState<ApiEndpoint[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [loadingStep, setLoadingStep] = useState<'fetching' | 'beautifying' | 'analyzing' | null>(null);
+  const [loadingStep, setLoadingStep] = useState<'fetching' | 'beautifying' | 'analyzing' | 'verifying' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysisSource, setAnalysisSource] = useState<string | null>(null);
   const [analysisCode, setAnalysisCode] = useState<string | null>(null);
   const [history, setHistory] = useLocalStorage<HistoryItem[]>('api-extractor-history', []);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  const [isAiDiscoveryEnabled, setIsAiDiscoveryEnabled] = useState(false);
+
+  const addLog = useCallback((message: string, type: LogType = 'info') => {
+      setLogs(prev => [...prev, {
+          id: Math.random().toString(36).substring(7),
+          timestamp: Date.now(),
+          message,
+          type
+      }]);
+  }, []);
 
   const handleFileSelect = (files: FileList) => {
     setError(null);
@@ -94,6 +85,7 @@ const App: React.FC = () => {
     setUrlInputs(['']);
     setSelectedFiles([]);
     setError(null);
+    setLogs([]);
   };
 
 
@@ -104,20 +96,42 @@ const App: React.FC = () => {
     setExtractedEndpoints([]);
     setAnalysisSource(null);
     setAnalysisCode(null);
+    setLogs([]);
 
     let sourceForHistory = '';
     
     try {
       let codeToAnalyze = '';
+      let initialUrls: string[] = [];
+
       if (inputMode === 'code') {
         if (!inputText.trim()) {
           setError('Please paste some code to analyze.');
           setIsLoading(false);
           return;
         }
-        codeToAnalyze = inputText;
-        sourceForHistory = 'Pasted Code';
-        setAnalysisSource(sourceForHistory);
+        
+        // Check for URLs in the input text even in code mode
+        const lines = inputText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const urlRegex = /^(https?:\/\/|www\.)/i;
+        const urlLines: string[] = [];
+        const nonUrlLines: string[] = [];
+
+        for (const line of lines) {
+          if (urlRegex.test(line)) {
+            urlLines.push(line);
+          } else {
+            nonUrlLines.push(line);
+          }
+        }
+
+        if (urlLines.length > 0) {
+             initialUrls = urlLines;
+        } else {
+             codeToAnalyze = inputText;
+             sourceForHistory = 'Pasted Code';
+             setAnalysisSource(sourceForHistory);
+        }
       } else if (inputMode === 'file') {
         if (selectedFiles.length === 0 || !inputText.trim()) {
             setError('Please select and upload a valid code file.');
@@ -127,69 +141,47 @@ const App: React.FC = () => {
         codeToAnalyze = inputText;
         sourceForHistory = `${selectedFiles.length} file(s): ${selectedFiles.map(f => f.name).join(', ')}`;
         setAnalysisSource(`${selectedFiles.length} file(s)`);
-      } else { // url mode
-        // Merge URLs from the dedicated URL inputs and any URLs typed line-by-line in the textarea
-        const urlsFromInputs = urlInputs.map(u => u.trim()).filter(Boolean);
-        const urlsFromText = inputText
-          .split(/\r?\n/) // each line
-          .map(line => line.trim())
-          .filter(line => line.length > 0);
+      }
 
-        const urlsToAnalyze = [...urlsFromInputs, ...urlsFromText];
-        if (urlsToAnalyze.length === 0) {
-          setError('Please enter at least one URL to analyze.');
-          setIsLoading(false);
-          return;
-        }
-        
-        let validUrls: URL[] = [];
-        for (const urlStr of urlsToAnalyze) {
-            try {
-                validUrls.push(new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`));
-            } catch (e) {
-                setError(`Please enter a valid URL. '${urlStr}' is invalid.`);
-                setIsLoading(false);
-                return;
-            }
-        }
-        
-        sourceForHistory = `URL(s): ${validUrls.map(u => u.href).join(', ')}`;
-        setLoadingStep('fetching');
-        setAnalysisSource(sourceForHistory);
+      // Handle URL fetching if we found URLs
+      if (initialUrls.length > 0) {
+         addLog(`Found ${initialUrls.length} URL(s) to analyze.`, 'info');
+         
+         let validUrls: URL[] = [];
+         for (const urlStr of initialUrls) {
+             try {
+                 validUrls.push(new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`));
+             } catch (e) {
+                 setError(`Please enter a valid URL. '${urlStr}' is invalid.`);
+                 setIsLoading(false);
+                 return;
+             }
+         }
+         
+         sourceForHistory = `URL(s): ${validUrls.map(u => u.href).join(', ')}`;
+         setLoadingStep('fetching');
+         setAnalysisSource(sourceForHistory);
 
-        const allContentPromises = validUrls.map(async (validUrl) => {
-            const response = await fetchWithProxies(validUrl.href);
-            const html = await response.text();
-            
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const scripts = doc.querySelectorAll('script');
-            
-            const scriptPromises = Array.from(scripts).map(async (script) => {
-              if (script.src) {
-                try {
-                  const scriptUrl = new URL(script.src, validUrl.href).href;
-                  const scriptResponse = await fetchWithProxies(scriptUrl);
-                  return await scriptResponse.text();
-                } catch (e) {
-                  const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                  console.warn(`Failed to fetch script via proxies: ${script.src}. Error: ${errorMessage}`);
-                  return `// Failed to fetch script: ${script.src}`;
-                }
-              }
-              return script.textContent || '';
-            });
-
-            const scriptContents = await Promise.all(scriptPromises);
-            return `/* --- Fetched from URL: ${validUrl.href} --- */\n\n${html}\n\n${scriptContents.join('\n\n/* --- SCRIPT SEPARATOR --- */\n\n')}`;
-        });
-        
-        const fetchedContents = await Promise.all(allContentPromises);
-        codeToAnalyze = fetchedContents.join('\n\n/* --- URL SEPARATOR --- */\n\n');
-        setInputText(codeToAnalyze);
+         // Fetch initial content
+         addLog(`Fetching content from ${validUrls.length} URL(s)...`, 'info');
+         const fetchPromises = validUrls.map(async u => {
+             try {
+                 const content = await fetchUrlContent(u.href);
+                 addLog(`Successfully fetched ${u.href}`, 'success');
+                 return content;
+             } catch (e) {
+                 addLog(`Failed to fetch ${u.href}`, 'error');
+                 throw e;
+             }
+         });
+         const fetchedContents = await Promise.all(fetchPromises);
+         codeToAnalyze = fetchedContents.join('\n\n/* --- URL SEPARATOR --- */\n\n');
+         
+         setInputText(codeToAnalyze);
       }
 
       if (!codeToAnalyze.trim()) {
+          addLog("No content to analyze.", 'error');
           setError('Could not find any code to analyze.');
           setIsLoading(false);
           return;
@@ -197,12 +189,97 @@ const App: React.FC = () => {
 
       setAnalysisCode(codeToAnalyze);
       setLoadingStep('analyzing');
-      const rawEndpoints = await extractApiEndpoints(codeToAnalyze);
+      addLog(`Starting analysis of ${codeToAnalyze.length} characters...`, 'ai');
+      
+      // --- Phase 1: Initial Extraction ---
+      const result1 = await extractApiEndpoints(codeToAnalyze);
+      let allEndpoints = [...result1.explicitEndpoints];
+      
+      addLog(`Phase 1: Found ${result1.explicitEndpoints.length} explicit endpoints.`, 'success');
+      
+      // Add predicted endpoints with a flag
+      const predicted1 = result1.predictedEndpoints.map(ep => ({ ...ep, isPredicted: true }));
+      allEndpoints = [...allEndpoints, ...predicted1];
+      if (predicted1.length > 0) {
+          addLog(`Phase 1: Predicted ${predicted1.length} potential endpoints.`, 'ai');
+      }
 
-      if (rawEndpoints.length > 0) {
+      // --- Phase 2: AI Discovery (Crawling) ---
+      if (isAiDiscoveryEnabled && result1.crawlingCandidates.length > 0) {
+          addLog(`AI Discovery: Found ${result1.crawlingCandidates.length} candidate links to crawl.`, 'ai');
+          setLoadingStep('fetching'); 
+          
+          const visited = new Set(initialUrls);
+          
+          const crawledContent = await smartCrawl(
+              result1.crawlingCandidates, 
+              visited, 
+              5,
+              (msg) => addLog(msg, 'info')
+          ); 
+          
+          if (crawledContent.length > 0) {
+              const combinedCrawledCode = crawledContent.join('\n\n/* --- CRAWLED PAGE SEPARATOR --- */\n\n');
+              setAnalysisCode(prev => (prev || '') + '\n\n' + combinedCrawledCode); 
+              
+              setLoadingStep('analyzing');
+              addLog(`Analyzing crawled content (${combinedCrawledCode.length} chars)...`, 'ai');
+              const result2 = await extractApiEndpoints(combinedCrawledCode);
+              
+              allEndpoints = [...allEndpoints, ...result2.explicitEndpoints];
+              const predicted2 = result2.predictedEndpoints.map(ep => ({ ...ep, isPredicted: true }));
+              allEndpoints = [...allEndpoints, ...predicted2];
+              
+              addLog(`Phase 2: Found ${result2.explicitEndpoints.length} more endpoints and predicted ${result2.predictedEndpoints.length} more.`, 'success');
+          }
+      }
+
+      // Deduplicate endpoints based on method + path
+      const uniqueEndpointsMap = new Map<string, ApiEndpoint>();
+      allEndpoints.forEach(ep => {
+          const key = `${ep.method}-${ep.path}`;
+          if (uniqueEndpointsMap.has(key)) {
+              const existing = uniqueEndpointsMap.get(key)!;
+              if (existing.isPredicted && !ep.isPredicted) {
+                  uniqueEndpointsMap.set(key, ep); 
+              }
+          } else {
+              uniqueEndpointsMap.set(key, ep);
+          }
+      });
+      
+      let finalEndpoints = Array.from(uniqueEndpointsMap.values());
+      addLog(`Total unique endpoints found: ${finalEndpoints.length}`, 'info');
+
+      // --- Phase 3: Verification ---
+      if (finalEndpoints.length > 0) {
+          setLoadingStep('verifying');
+          addLog(`Verifying ${finalEndpoints.length} endpoints...`, 'info');
+          
+          // Determine base URL for relative paths
+          let baseUrl = null;
+          if (initialUrls.length > 0) {
+              try {
+                  baseUrl = new URL(initialUrls[0]).origin;
+              } catch (e) {}
+          }
+
+          const verifiedEndpoints = await Promise.all(finalEndpoints.map(async (ep) => {
+              const status = await verifyEndpoint(ep, baseUrl, codeToAnalyze + (analysisCode || ''));
+              if (status === 'verified') addLog(`Verified: ${ep.method} ${ep.path}`, 'success');
+              // Don't log every single failure to avoid spam, maybe just summary
+              return { ...ep, verificationStatus: status };
+          }));
+          
+          finalEndpoints = verifiedEndpoints;
+          addLog("Verification complete.", 'success');
+      }
+
+
+      if (finalEndpoints.length > 0) {
         setLoadingStep('beautifying');
         const beautifiedEndpoints = await Promise.all(
-          rawEndpoints.map(async (endpoint) => {
+          finalEndpoints.map(async (endpoint) => {
             try {
               const [curl, javascript, python, php, go] = await Promise.all([
                 beautifyCode(endpoint.example.request.curl),
@@ -219,8 +296,7 @@ const App: React.FC = () => {
                 },
               };
             } catch (e) {
-                console.warn("Could not beautify snippets for endpoint:", endpoint.path, e);
-                return endpoint; // return original endpoint if beautification fails
+                return endpoint; 
             }
           })
         );
@@ -229,10 +305,10 @@ const App: React.FC = () => {
         const newHistoryItem: HistoryItem = {
             id: Date.now().toString(),
             timestamp: Date.now(),
-            source: sourceForHistory,
+            source: sourceForHistory + (isAiDiscoveryEnabled ? ' (AI Discovery)' : ''),
             inputMode,
             endpoints: beautifiedEndpoints,
-            analysisCode: codeToAnalyze,
+            analysisCode: codeToAnalyze, 
             originalInput: {
               inputText: (inputMode === 'code' || inputMode === 'file') ? inputText : codeToAnalyze,
               urlInputs,
@@ -243,19 +319,21 @@ const App: React.FC = () => {
 
       } else {
         setExtractedEndpoints([]);
+        addLog("No endpoints found.", 'warning');
       }
       
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      addLog(`Error: ${errorMessage}`, 'error');
       setError(`Failed to fetch or process the URL. The site might be protected by CORS or is offline. All proxy attempts failed. Try pasting the code manually. Details: ${errorMessage}`);
     } finally {
       setIsLoading(false);
       setLoadingStep(null);
     }
-  }, [inputText, urlInputs, inputMode, selectedFiles, setHistory]);
+  }, [inputText, urlInputs, inputMode, selectedFiles, setHistory, isAiDiscoveryEnabled, addLog, analysisCode]);
 
-  const handleSetInputMode = (mode: 'code' | 'url' | 'file') => {
+  const handleSetInputMode = (mode: 'code' | 'file') => {
     if (mode === inputMode) return;
     handleClear();
     setInputMode(mode);
@@ -291,8 +369,10 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-brand-bg">
-      <main className="flex-grow p-4">
+    <div className="flex flex-col h-full bg-brand-bg">
+      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <main className="flex-grow p-4 overflow-hidden">
         <PanelGroup direction="horizontal">
             <Panel defaultSize={25} minSize={20}>
                 <PanelGroup direction="vertical">
@@ -310,18 +390,25 @@ const App: React.FC = () => {
                             onClear={handleClear}
                             onFileSelect={handleFileSelect}
                             fileNames={selectedFiles.map(f => f.name)}
+                            isAiDiscoveryEnabled={isAiDiscoveryEnabled}
+                            setIsAiDiscoveryEnabled={setIsAiDiscoveryEnabled}
                         />
                     </Panel>
                     <PanelResizeHandle className="ResizeHandleOuter">
                         <div className="ResizeHandleInner" />
                     </PanelResizeHandle>
                     <Panel defaultSize={40} minSize={20}>
-                        <HistoryPanel 
-                            history={history}
-                            onLoad={handleLoadHistory}
-                            onDelete={handleDeleteHistory}
-                            onClearAll={handleClearAllHistory}
-                        />
+                         {/* Show Activity Log if there are logs, otherwise History */}
+                         {logs.length > 0 ? (
+                             <ActivityLog logs={logs} />
+                         ) : (
+                            <HistoryPanel 
+                                history={history}
+                                onLoad={handleLoadHistory}
+                                onDelete={handleDeleteHistory}
+                                onClearAll={handleClearAllHistory}
+                            />
+                         )}
                     </Panel>
                 </PanelGroup>
             </Panel>
