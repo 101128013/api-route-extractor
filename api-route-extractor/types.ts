@@ -16,6 +16,8 @@ export interface ApiEndpoint {
   };
   isPredicted?: boolean;
   verificationStatus?: 'verified' | 'auth_required' | 'not_found' | 'unsafe' | 'found_in_docs' | 'unverified';
+  authType?: 'none' | 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'cookie' | 'unknown';
+  documentationUrl?: string;
 }
 
 export interface HistoryItem {

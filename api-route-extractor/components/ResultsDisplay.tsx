@@ -13,9 +13,10 @@ interface ResultsDisplayProps {
   source: string | null;
   analysisCode: string | null;
   onUpdateEndpoint: (index: number, updatedEndpoint: ApiEndpoint) => void;
+  totalCost: number;
 }
 
-export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoading, error, source, analysisCode, onUpdateEndpoint }) => {
+export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoading, error, source, analysisCode, onUpdateEndpoint, totalCost }) => {
 
   const handleDownload = () => {
     if (endpoints.length === 0 || isLoading || error) {
@@ -97,6 +98,9 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
           <h2 className="text-xl font-bold text-brand-text flex items-center gap-2">
             <SparklesIcon className="text-brand-secondary" />
             Extracted Endpoints ({endpoints.length})
+            <span className="ml-2 text-sm text-brand-subtle bg-brand-primary/20 px-2 py-1 rounded-full border border-brand-primary/50">
+              Cost: ${totalCost.toFixed(5)} USD / ${(totalCost * 1.40).toFixed(5)} CAD
+            </span>
           </h2>
           <div className="flex gap-2">
               {endpoints.length > 0 && !isLoading && !error && (

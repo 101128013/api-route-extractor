@@ -45,6 +45,10 @@ const App: React.FC = () => {
           type
       }]);
   }, []);
+  const [totalCost, setTotalCost] = useState(0);
+  const handleCostUpdate = useCallback((cost: number) => {
+    setTotalCost(prev => prev + cost);
+  }, []);
 
   const handleFileSelect = (files: FileList) => {
     setError(null);
@@ -192,7 +196,15 @@ const App: React.FC = () => {
       addLog(`Starting analysis of ${codeToAnalyze.length} characters...`, 'ai');
       
       // --- Phase 1: Initial Extraction ---
-      const result1 = await extractApiEndpoints(codeToAnalyze);
+      // Determine base URL for relative paths
+      let baseUrl = undefined;
+      if (initialUrls.length > 0) {
+          try {
+              baseUrl = new URL(initialUrls[0]).origin;
+          } catch (e) {}
+      }
+      
+      const result1 = await extractApiEndpoints(codeToAnalyze, baseUrl, handleCostUpdate);
       let allEndpoints = [...result1.explicitEndpoints];
       
       addLog(`Phase 1: Found ${result1.explicitEndpoints.length} explicit endpoints.`, 'success');
@@ -224,7 +236,7 @@ const App: React.FC = () => {
               
               setLoadingStep('analyzing');
               addLog(`Analyzing crawled content (${combinedCrawledCode.length} chars)...`, 'ai');
-              const result2 = await extractApiEndpoints(combinedCrawledCode);
+              const result2 = await extractApiEndpoints(combinedCrawledCode, baseUrl, handleCostUpdate);
               
               allEndpoints = [...allEndpoints, ...result2.explicitEndpoints];
               const predicted2 = result2.predictedEndpoints.map(ep => ({ ...ep, isPredicted: true }));
@@ -282,11 +294,11 @@ const App: React.FC = () => {
           finalEndpoints.map(async (endpoint) => {
             try {
               const [curl, javascript, python, php, go] = await Promise.all([
-                beautifyCode(endpoint.example.request.curl),
-                beautifyCode(endpoint.example.request.javascript),
-                beautifyCode(endpoint.example.request.python),
-                beautifyCode(endpoint.example.request.php),
-                beautifyCode(endpoint.example.request.go),
+                beautifyCode(endpoint.example.request.curl, handleCostUpdate),
+                beautifyCode(endpoint.example.request.javascript, handleCostUpdate),
+                beautifyCode(endpoint.example.request.python, handleCostUpdate),
+                beautifyCode(endpoint.example.request.php, handleCostUpdate),
+                beautifyCode(endpoint.example.request.go, handleCostUpdate),
               ]);
               return {
                 ...endpoint,
@@ -331,7 +343,7 @@ const App: React.FC = () => {
       setIsLoading(false);
       setLoadingStep(null);
     }
-  }, [inputText, urlInputs, inputMode, selectedFiles, setHistory, isAiDiscoveryEnabled, addLog, analysisCode]);
+  }, [inputText, urlInputs, inputMode, selectedFiles, setHistory, isAiDiscoveryEnabled, addLog, analysisCode, handleCostUpdate]);
 
   const handleSetInputMode = (mode: 'code' | 'file') => {
     if (mode === inputMode) return;
@@ -392,6 +404,7 @@ const App: React.FC = () => {
                             fileNames={selectedFiles.map(f => f.name)}
                             isAiDiscoveryEnabled={isAiDiscoveryEnabled}
                             setIsAiDiscoveryEnabled={setIsAiDiscoveryEnabled}
+                            totalCost={totalCost}
                         />
                     </Panel>
                     <PanelResizeHandle className="ResizeHandleOuter">
@@ -423,6 +436,7 @@ const App: React.FC = () => {
                     source={analysisSource}
                     analysisCode={analysisCode}
                     onUpdateEndpoint={handleUpdateEndpoint}
+                    totalCost={totalCost}
                 />
             </Panel>
         </PanelGroup>

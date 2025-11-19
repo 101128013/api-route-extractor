@@ -11,6 +11,9 @@ export const verifyEndpoint = async (
     baseUrl: string | null,
     crawledContent: string
 ): Promise<VerificationStatus> => {
+    if (!endpoint || !endpoint.method) {
+        return 'unverified';
+    }
     const method = endpoint.method.toUpperCase();
     
     // 1. Safety Check: Do not auto-test destructive methods
