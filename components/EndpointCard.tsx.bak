@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect, useId } from 'react';
 import type { ApiEndpoint } from '../types';
 import { analyzeApiCall } from '../services/geminiService';
 import { EndpointChat } from './EndpointChat';
+import { RequestEditor } from './RequestEditor';
+import { parseCurlCommand, ParsedRequest } from '../utils/curlParser';
+import { AuthService } from '../services/AuthService';
+import { TestIcon, HistoryIcon } from './icons';
 import {
     CheckIcon,
     CopyIcon,
@@ -14,9 +18,6 @@ import {
     ChevronDownIcon,
     PlayIcon,
     SpinnerIcon,
-    UserIcon,
-    BotIcon,
-    SendIcon,
     PencilIcon
 } from './icons';
 
@@ -25,6 +26,10 @@ interface EndpointCardProps {
   analysisCode: string | null;
   index: number;
   onUpdate: (index: number, updatedEndpoint: ApiEndpoint) => void;
+  variables?: Record<string, string>;
+  onRequestExecuted?: (endpoint: ApiEndpoint, request: any, response: any, success: boolean, error?: string) => void;
+  onOpenTests?: (endpoint: ApiEndpoint) => void;
+  onOpenHistory?: (endpoint: ApiEndpoint) => void;
 }
 
 const methodColors: Record<ApiEndpoint['method'], string> = {
@@ -38,77 +43,20 @@ const methodColors: Record<ApiEndpoint['method'], string> = {
   UNKNOWN: 'bg-gray-700/20 text-gray-400 border-gray-700/30',
 };
 
-const SnippetTab: React.FC<{ active: boolean; onClick: (e: React.MouseEvent) => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
-    <button
-        onClick={onClick}
-        className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
-            active
-                ? 'bg-brand-secondary/90 text-white'
-                : 'bg-brand-primary/60 text-brand-subtle hover:bg-brand-primary'
-        }`}
-    >
-        {children}
-    </button>
-);
-
-// This is a simplified cURL command parser. It handles common cases but may not support all cURL features.
-const parseCurlCommand = (curl: string) => {
-    const result = {
-        method: 'GET',
-        headers: {} as Record<string, string>,
-        body: undefined as string | undefined,
-        url: ''
-    };
-
-    // Extract URL
-    // Look for http/https or relative paths starting with /
-    const urlMatch = curl.match(/(?:['"])((?:https?:\/\/|\/)[^'"]+)(?:['"])/);
-    if (urlMatch) {
-        result.url = urlMatch[1];
-    } else {
-         // Look for unquoted URLs (http/https or /path)
-         // We exclude tokens starting with - (flags)
-         const tokens = curl.split(/\s+/);
-         for (const token of tokens) {
-             if ((token.startsWith('http') || token.startsWith('/')) && !token.startsWith('-')) {
-                 result.url = token;
-                 break;
-             }
-         }
-    }
-
-    // Extract method
-    const methodMatch = curl.match(/-X\s+([A-Z]+)|--request\s+([A-Z]+)/);
-    if (methodMatch) {
-        result.method = (methodMatch[1] || methodMatch[2] || 'GET').toUpperCase();
-    }
-
-    // Extract headers
-    const headerRegex = /-H\s+'([^']*)'|-H\s+"([^"]*)"/g;
-    let headerMatch;
-    while ((headerMatch = headerRegex.exec(curl)) !== null) {
-        const header = headerMatch[1] || headerMatch[2];
-        const [key, ...valueParts] = header.split(':');
-        if (key && valueParts.length > 0) {
-            result.headers[key.trim()] = valueParts.join(':').trim();
-        }
-    }
-
-    // Extract body
-    const dataMatch = curl.match(/-d\s+'([^']*)'|--data\s+'([^']*)'|-d\s+"([^"]*)"|--data\s+"([^"]*)"/);
-    if (dataMatch) {
-        result.body = dataMatch[1] || dataMatch[2] || dataMatch[3] || dataMatch[4];
-    }
-
-    return result;
-}
 
 
-export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCode, index, onUpdate }) => {
+export const EndpointCard: React.FC<EndpointCardProps> = ({ 
+  endpoint, 
+  analysisCode, 
+  index, 
+  onUpdate, 
+  variables,
+  onRequestExecuted,
+  onOpenTests,
+  onOpenHistory,
+}) => {
     const [pathCopied, setPathCopied] = useState(false);
-    const [exampleCopied, setExampleCopied] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
-    const [activeSnippet, setActiveSnippet] = useState<'curl' | 'javascript' | 'python' | 'php' | 'go'>('curl');
     const [isExecuting, setIsExecuting] = useState(false);
     const [liveResponse, setLiveResponse] = useState<string | null>(null);
     const [executionError, setExecutionError] = useState<string | null>(null);
@@ -121,14 +69,38 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
     const [currentDescription, setCurrentDescription] = useState(endpoint.description);
     const descriptionTextareaRef = useRef<HTMLTextAreaElement>(null);
 
+    // Request Editor State
+    const [requestData, setRequestData] = useState<ParsedRequest>({
+        method: endpoint.method,
+        url: '',
+        headers: {},
+        body: undefined
+    });
 
     const uniqueId = useId();
 
-    // Scrolling handled within EndpointChat component
+    const resolveVariables = (text: string): string => {
+        if (!variables || !text) return text;
+        let resolvedText = text;
+        Object.entries(variables).forEach(([key, value]: [string, string]) => {
+            resolvedText = resolvedText.replace(new RegExp(`{{${key}}}`, 'g'), value);
+        });
+        return resolvedText;
+    };
 
     useEffect(() => {
       setCurrentDescription(endpoint.description);
     }, [endpoint.description]);
+
+    // Initialize request data from cURL when expanded or endpoint changes
+    useEffect(() => {
+        if (isExpanded) {
+            const parsed = parseCurlCommand(endpoint.example.request.curl);
+            // If the parsed URL is relative, try to make it absolute if we have a base, 
+            // or just leave it. The user might need to edit it.
+            setRequestData(parsed);
+        }
+    }, [isExpanded, endpoint.example.request.curl]);
 
     useEffect(() => {
         if (isEditingDescription && descriptionTextareaRef.current) {
@@ -146,34 +118,53 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
         setTimeout(() => setPathCopied(false), 2000);
     };
     
-    const handleCopyExample = (e: React.MouseEvent) => {
-        e.stopPropagation();
-        navigator.clipboard.writeText(endpoint.example.request[activeSnippet]);
-        setExampleCopied(true);
-        setTimeout(() => setExampleCopied(false), 2000);
-    };
 
-    const handleRunCurl = async (e: React.MouseEvent) => {
-        e.stopPropagation();
+
+    const handleRunRequest = async () => {
         setIsExecuting(true);
         setLiveResponse(null);
         setExecutionError(null);
         setGeminiAnalysis(null);
         setAnalysisError(null);
 
+        const startTime = Date.now();
+
         try {
-            const { url, method, headers, body } = parseCurlCommand(endpoint.example.request.curl);
+            let { url, method, headers, body } = requestData;
 
             if (!url) {
-                throw new Error("Could not parse a valid URL from the cURL command.");
+                throw new Error("URL is missing.");
             }
 
-            if (!url.startsWith('http')) {
-                throw new Error(`The cURL command contains a relative path ('${url}').\n\nPlease update the cURL command to use a full URL (e.g., 'https://api.example.com${url}') or provide a source URL that includes the domain.`);
+            const resolvedUrl = resolveVariables(url);
+            let resolvedBody: string | undefined = body ? resolveVariables(body) : undefined;
+            let resolvedHeaders: Record<string, string> = {};
+            Object.entries(headers).forEach(([key, value]: [string, string]) => {
+                resolvedHeaders[key] = resolveVariables(value);
+            });
+
+            if (!resolvedUrl.startsWith('http')) {
+                throw new Error(`The URL '${resolvedUrl}' is relative. Please provide a full URL (e.g., 'https://api.example.com${resolvedUrl}') or use environment variables.`);
+            }
+            
+            // Apply auth configs - we need environmentId from variables context
+            // For now, apply all enabled auth configs (can be filtered by environment later)
+            const authConfigs = AuthService.getAuthConfigs().filter(a => a.enabled);
+            let requestWithAuth: { url: string; headers: Record<string, string>; body?: string | undefined } = { 
+              url: resolvedUrl, 
+              headers: resolvedHeaders, 
+              body: resolvedBody 
+            };
+            for (const authConfig of authConfigs) {
+                requestWithAuth = AuthService.applyAuthToRequest(authConfig, requestWithAuth);
+            }
+            resolvedHeaders = requestWithAuth.headers;
+            if (requestWithAuth.body !== undefined) {
+              resolvedBody = requestWithAuth.body;
             }
             
             // Browsers automatically set Content-Length, so we remove it to avoid conflicts.
-            const cleanedHeaders = { ...headers };
+            const cleanedHeaders = { ...resolvedHeaders };
             Object.keys(cleanedHeaders).forEach(key => {
                 if (key.toLowerCase() === 'content-length') {
                     delete cleanedHeaders[key];
@@ -181,10 +172,41 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
             });
 
             // Always use the internal proxy to bypass CORS
-            const fetchUrl = `/proxy?url=${encodeURIComponent(url)}`;
+            const fetchUrl = `/proxy?url=${encodeURIComponent(resolvedUrl)}`;
             
-            const response = await fetch(fetchUrl, { method, headers: cleanedHeaders, body });
+            const response = await fetch(fetchUrl, { method: method || endpoint.method, headers: cleanedHeaders, body: resolvedBody });
+            const duration = Date.now() - startTime;
             const responseText = await response.text();
+
+            // Get response headers
+            const responseHeaders: Record<string, string> = {};
+            response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
+
+            const responseData = {
+                status: response.status,
+                statusText: response.statusText,
+                headers: responseHeaders,
+                body: responseText,
+                duration,
+            };
+
+            // Track in history
+            if (onRequestExecuted) {
+                onRequestExecuted(
+                    endpoint,
+                    {
+                        method: method || endpoint.method,
+                        url: resolvedUrl,
+                        headers: cleanedHeaders,
+                        body: resolvedBody || '',
+                    },
+                    responseData,
+                    response.ok,
+                    response.ok ? undefined : `Status ${response.status}: ${responseText.substring(0, 100)}`
+                );
+            }
 
             if (!response.ok) {
                 let formattedError = responseText;
@@ -205,6 +227,29 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
             setExecutionError(`Request Failed.\n\nError: ${errorMessage}`);
+            
+            // Track failed request in history
+            if (onRequestExecuted) {
+                const duration = Date.now() - startTime;
+                onRequestExecuted(
+                    endpoint,
+                    {
+                        method: requestData.method || endpoint.method,
+                        url: requestData.url,
+                        headers: requestData.headers,
+                        body: requestData.body,
+                    },
+                    {
+                        status: 0,
+                        statusText: 'Error',
+                        headers: {},
+                        body: errorMessage,
+                        duration,
+                    },
+                    false,
+                    errorMessage
+                );
+            }
         } finally {
             setIsExecuting(false);
         }
@@ -363,28 +408,44 @@ export const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, analysisCo
             <p className="text-sm text-brand-subtle mb-4 whitespace-pre-wrap">{endpoint.details}</p>
 
             <div className="flex justify-between items-center mb-2">
-                <h4 className="font-semibold text-brand-text">Example Request</h4>
-            </div>
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <SnippetTab active={activeSnippet === 'curl'} onClick={(e) => { e.stopPropagation(); setActiveSnippet('curl'); }}>cURL</SnippetTab>
-                <SnippetTab active={activeSnippet === 'javascript'} onClick={(e) => { e.stopPropagation(); setActiveSnippet('javascript');}}>JavaScript</SnippetTab>
-                <SnippetTab active={activeSnippet === 'python'} onClick={(e) => { e.stopPropagation(); setActiveSnippet('python'); }}>Python</SnippetTab>
-                <SnippetTab active={activeSnippet === 'php'} onClick={(e) => { e.stopPropagation(); setActiveSnippet('php'); }}>PHP</SnippetTab>
-                <SnippetTab active={activeSnippet === 'go'} onClick={(e) => { e.stopPropagation(); setActiveSnippet('go'); }}>Go</SnippetTab>
-            </div>
-            <div className="bg-brand-bg rounded-md p-3 font-mono text-xs relative border border-brand-primary">
-                <pre className="whitespace-pre-wrap break-all pr-24"><code>{endpoint.example.request[activeSnippet]}</code></pre>
-                <div className="absolute top-2 right-2 flex items-center gap-2">
-                     {activeSnippet === 'curl' && (
-                        <button onClick={handleRunCurl} disabled={isExecuting} className="p-1.5 rounded-md bg-brand-surface hover:bg-brand-primary text-brand-subtle hover:text-white transition-colors disabled:opacity-50 disabled:cursor-wait" title="Run cURL command">
-                            {isExecuting ? <SpinnerIcon /> : <PlayIcon />}
+                <h4 className="font-semibold text-brand-text">Request Builder</h4>
+                 <div className="flex items-center gap-2">
+                    {onOpenTests && (
+                        <button 
+                            onClick={() => onOpenTests(endpoint)} 
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-brand-primary hover:bg-brand-primary/80 text-white transition-colors" 
+                            title="Tests"
+                        >
+                            <TestIcon className="w-4 h-4" />
+                            <span>Tests</span>
                         </button>
                     )}
-                    <button onClick={handleCopyExample} className="p-1.5 rounded-md bg-brand-surface hover:bg-brand-primary text-brand-subtle hover:text-white transition-colors" title={`Copy ${activeSnippet} snippet`}>
-                        {exampleCopied ? <CheckIcon /> : <CopyIcon />}
+                    {onOpenHistory && (
+                        <button 
+                            onClick={() => onOpenHistory(endpoint)} 
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-brand-primary hover:bg-brand-primary/80 text-white transition-colors" 
+                            title="History"
+                        >
+                            <HistoryIcon className="w-4 h-4" />
+                            <span>History</span>
+                        </button>
+                    )}
+                    <button onClick={handleRunRequest} disabled={isExecuting} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-brand-secondary hover:bg-brand-secondary/80 text-white transition-colors disabled:opacity-50 disabled:cursor-wait" title="Run Request">
+                        {isExecuting ? <SpinnerIcon /> : <PlayIcon />}
+                        <span>Send Request</span>
                     </button>
                 </div>
             </div>
+            
+            {/* Interactive Request Editor */}
+            <RequestEditor 
+                initialUrl={requestData.url}
+                initialHeaders={requestData.headers}
+                initialBody={requestData.body}
+                onChange={(data) => setRequestData({ ...requestData, ...data })}
+            />
+
+            
             <h4 className="font-semibold text-brand-text mb-2 mt-4">
                 {isExecuting || hasLiveResult ? 'Live Response' : 'Example Response'}
             </h4>

@@ -6,6 +6,8 @@ import { EmptyStateIcon, ErrorIcon, SpinnerIcon, DownloadIcon, SparklesIcon, Cod
 import { generateOpenApiSpec, generatePostmanCollection, downloadFile } from '../services/ExportService';
 
 
+import type { Collection, RequestHistoryItem } from '../types';
+
 interface ResultsDisplayProps {
   endpoints: ApiEndpoint[];
   isLoading: boolean;
@@ -14,9 +16,31 @@ interface ResultsDisplayProps {
   analysisCode: string | null;
   onUpdateEndpoint: (index: number, updatedEndpoint: ApiEndpoint) => void;
   totalCost: number;
+  variables?: Record<string, string>;
+  collections?: Collection[];
+  selectedCollectionId?: string | null;
+  onCollectionSelect?: (id: string | null) => void;
+  onRequestExecuted?: (endpoint: ApiEndpoint, request: any, response: any, success: boolean, error?: string) => void;
+  onOpenTests?: (endpoint: ApiEndpoint) => void;
+  onOpenHistory?: (endpoint: ApiEndpoint) => void;
 }
 
-export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoading, error, source, analysisCode, onUpdateEndpoint, totalCost }) => {
+export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ 
+  endpoints, 
+  isLoading, 
+  error, 
+  source, 
+  analysisCode, 
+  onUpdateEndpoint, 
+  totalCost, 
+  variables,
+  collections = [],
+  selectedCollectionId,
+  onCollectionSelect,
+  onRequestExecuted,
+  onOpenTests,
+  onOpenHistory,
+}) => {
 
   const handleDownload = () => {
     if (endpoints.length === 0 || isLoading || error) {
@@ -85,6 +109,10 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
             analysisCode={analysisCode} 
             index={index}
             onUpdate={onUpdateEndpoint}
+            variables={variables}
+            onRequestExecuted={onRequestExecuted}
+            onOpenTests={onOpenTests}
+            onOpenHistory={onOpenHistory}
           />
         ))}
       </div>
@@ -95,13 +123,27 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({ endpoints, isLoa
     <div className="flex flex-col bg-brand-surface rounded-lg border border-brand-primary h-full">
       <div className="flex flex-col p-3 border-b border-brand-primary">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xl font-bold text-brand-text flex items-center gap-2">
-            <SparklesIcon className="text-brand-secondary" />
-            Extracted Endpoints ({endpoints.length})
-            <span className="ml-2 text-sm text-brand-subtle bg-brand-primary/20 px-2 py-1 rounded-full border border-brand-primary/50">
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-bold text-brand-text flex items-center gap-2">
+              <SparklesIcon className="text-brand-secondary" />
+              Extracted Endpoints ({endpoints.length})
+            </h2>
+            {collections && collections.length > 0 && onCollectionSelect && (
+              <select
+                value={selectedCollectionId || ''}
+                onChange={(e) => onCollectionSelect(e.target.value || null)}
+                className="bg-brand-surface border border-brand-primary rounded px-3 py-1 text-sm text-brand-text"
+              >
+                <option value="">All Endpoints</option>
+                {collections.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
+            <span className="text-sm text-brand-subtle bg-brand-primary/20 px-2 py-1 rounded-full border border-brand-primary/50">
               Cost: ${totalCost.toFixed(5)} USD / ${(totalCost * 1.40).toFixed(5)} CAD
             </span>
-          </h2>
+          </div>
           <div className="flex gap-2">
               {endpoints.length > 0 && !isLoading && !error && (
                 <>

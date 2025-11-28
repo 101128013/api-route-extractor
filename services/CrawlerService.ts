@@ -37,23 +37,79 @@ export const fetchUrlContent = async (url: string): Promise<string> => {
         
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
+        
+        // Rewrite relative URLs to absolute
+        const baseUrl = new URL(url);
+        
+        // Handle <base> tag if present
+        const baseTag = doc.querySelector('base');
+        const docBaseUrl = baseTag && baseTag.href ? new URL(baseTag.href, url) : baseUrl;
+
+        const rewriteAttribute = (element: Element, attr: string) => {
+            const value = element.getAttribute(attr);
+            if (value && !value.startsWith('data:') && !value.startsWith('javascript:') && !value.startsWith('#')) {
+                try {
+                    element.setAttribute(attr, new URL(value, docBaseUrl.href).href);
+                } catch (e) {
+                    // Ignore invalid URLs
+                }
+            }
+        };
+
+        doc.querySelectorAll('[src]').forEach(el => rewriteAttribute(el, 'src'));
+        doc.querySelectorAll('[href]').forEach(el => rewriteAttribute(el, 'href'));
+        doc.querySelectorAll('[action]').forEach(el => rewriteAttribute(el, 'action'));
+
         const scripts = doc.querySelectorAll('script');
         
         const scriptPromises = Array.from(scripts).map(async (script) => {
-          if (script.src) {
+          const src = script.getAttribute('src'); // Get raw attribute to avoid local resolution issues
+          if (src) {
             try {
-              const scriptUrl = new URL(script.src, url).href;
+              const scriptUrl = new URL(src, docBaseUrl.href).href;
               const scriptResponse = await fetchWithProxies(scriptUrl);
               return await scriptResponse.text();
             } catch (e) {
-              return `// Failed to fetch script: ${script.src}`;
+              return `// Failed to fetch script: ${src}`;
             }
           }
           return script.textContent || '';
         });
 
         const scriptContents = await Promise.all(scriptPromises);
-        return `/* --- Fetched from URL: ${url} --- */\n\n${html}\n\n${scriptContents.join('\n\n/* --- SCRIPT SEPARATOR --- */\n\n')}`;
+        
+        // Filter out boilerplate scripts - prioritize unique application code
+        const filteredScripts = scriptContents.filter((script, index) => {
+            // Skip very small scripts (likely just config)
+            if (script.length < 50) return false;
+            
+            // Skip scripts that are clearly libraries (check for common patterns)
+            const lowerScript = script.toLowerCase();
+            const isLibrary = 
+                lowerScript.includes('jquery') && lowerScript.length > 1000 ||
+                lowerScript.includes('lodash') ||
+                lowerScript.includes('underscore') ||
+                lowerScript.includes('bootstrap') && !lowerScript.includes('api') ||
+                lowerScript.includes('polyfill') ||
+                lowerScript.includes('shim') ||
+                (lowerScript.includes('copyright') && lowerScript.length > 500);
+            
+            // Keep scripts with API-related content
+            const hasApiContent = 
+                script.includes('http') || 
+                script.includes('api') || 
+                script.includes('fetch') || 
+                script.includes('ajax') ||
+                script.includes('endpoint') ||
+                script.includes('url') && script.length < 5000; // Reasonable size
+            
+            return !isLibrary || hasApiContent;
+        });
+        
+        // Serialize the modified HTML
+        const modifiedHtml = doc.documentElement.outerHTML;
+
+        return `/* --- Fetched from URL: ${url} --- */\n\n${modifiedHtml}\n\n${filteredScripts.join('\n\n/* --- SCRIPT SEPARATOR --- */\n\n')}`;
     } catch (e) {
         console.error("Failed to fetch URL:", url, e);
         throw e;
